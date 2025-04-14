@@ -59,9 +59,6 @@ python ApparelSuitability.py
 
 ## 🔍 How It Works
 
-<div align="center">
-  <img src="https://via.placeholder.com/800x400" alt="Workflow Diagram">
-</div>
 
 1. **Weather Data Collection**
    - Enter your city name
