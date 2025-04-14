@@ -2,7 +2,6 @@
 
 <div align="center">
 
-![Apparel Suitability Logo](https://via.placeholder.com/150x150)
 
 **Smart clothing recommendations based on real-time weather and what you're wearing**
 
