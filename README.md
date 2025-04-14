@@ -8,7 +8,7 @@
 [![Python 3.x](https://img.shields.io/badge/python-3.x-blue.svg)](https://www.python.org/)
 [![OpenCV](https://img.shields.io/badge/opencv-4.x-green.svg)](https://opencv.org/)
 [![PyTorch](https://img.shields.io/badge/pytorch-2.x-orange.svg)](https://pytorch.org/)
-[![YOLO](https://img.shields.io/badge/YOLO-v8-yellow.svg)](https://github.com/ultralytics/ultralytics)
+[![YOLO](https://img.shields.io/badge/YOLO-v12-yellow.svg)](https://github.com/ultralytics/ultralytics)
 
 </div>
 
