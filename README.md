@@ -39,7 +39,7 @@ git clone https://github.com/yourusername/apparel-suitability.git
 cd apparel-suitability
 
 # Install dependencies
-pip install opencv-python torch ultralytics supervision numpy requests
+pip install opencv-python torch ultralytics supervision numpy requests rich pandas
 ```
 
 ### 2. Configuration
@@ -50,6 +50,8 @@ pip install opencv-python torch ultralytics supervision numpy requests
   API_KEY = "your_api_key_here"
   ```
 - Download the custom YOLO model file (`best.pt`) and place it in the project directory
+- Ensure a webcam is connected (default capture_index=0). Adjust if needed:
+detector = ClothingDetector(capture_index=0, value_map=value_map)
 
 ### 3. Running the Application
 
@@ -62,23 +64,24 @@ python ApparelSuitability.py
 
 1. **Weather Data Collection**
    - Enter your city name
-   - Current temperature and "feels like" data retrieved
+   - Retrieves current temperature and "feels like" data, cached for 10 minutes.
 
 2. **User Preferences**
-   - Indicate whether you're sensitive to cold
-   - Confirm you're wearing basic clothing (t-shirt/tank top)
+   - Indicate if you’re prone to feeling cold.
+   - Confirm you’re wearing a t-shirt or tank top.
+   - Customize warmth values for clothing items.
 
 3. **Clothing Detection**
-   - AI model identifies clothing items you're wearing
-   - Each item is assigned a "warmth value"
+   - AI model detects clothing items in real-time.
+   - Persists bounding boxes for 3 seconds for smooth visualization.
+   - Assigns warmth values to detected items.
 
 4. **Temperature Analysis**
-   - The application compares your clothing's warmth to the current temperature
-   - Takes into account environmental conditions and personal preferences
-
+   - Compares clothing warmth to required warmth based on temperature, season, and activity level.
+   - Adjusts for cold sensitivity.
 5. **Smart Recommendations**
-   - Suggests specific clothing items if you need more warmth
-   - Advises if you're overdressed for the conditions
+   - Suggests specific clothing items to add or remove.
+   - Displays recommendations in a formatted table.
 
 ## 🧠 The AI Model
 
@@ -91,29 +94,44 @@ The project uses a custom-trained YOLO (You Only Look Once) model designed to de
 | Vest          | 3            |
 | Suit          | 5            |
 | Sweater       | 7            |
+| Hoodie        | 8            |
+| Rain Jacket   | 9            |
 | Trench coat   | 10           |
+| Puffer        | 12           |
 
 ## ⌨️ Controls
 
 - **ESC**: Exit the application
-- **N**: Pause/resume detection
+- **P**: Pause/resume detection
+- Warmth values can be customized during runtime.
 
 ## 📁 Output
 
-Detected clothing images are saved to an `output_images` directory created in the project folder.
+- Images: Saved to output_images/ directory.
+- Video: Annotated video saved as output_images/output_video.mp4.
+- CSV: Detection results saved to output_images/detection_results.csv.
 
 ## 📝 Example Output
 
 ```
-What city: New York
-Actual temp: 15.25
-Feels like: 13.78
-Are you prone to feeling cold? (yes/no): yes
-Are you wearing at least a t-shirt or a tank top? (yes/no): yes
-You are ready to proceed!
-Using Device: cpu
-You need at least: 2.74 Celsius worth of clothes!
-We recommend you put on a sweater to stay warm.
+Enter your city: New York
+[green]Actual temp: 15.25°C[/green]
+[green]Feels like: 13.78°C[/green]
+Are you prone to feeling cold? [y/N]: yes
+Are you wearing at least a t-shirt or tank top? [Y/n]: yes
+[bold cyan]Customize warmth values (press Enter for default)[/bold cyan]
+Enter warmth value for hoodie [8]: 9
+...
+[blue]Using device: cuda[/blue]
+[green]Webcam opened successfully[/green]
+[yellow]Raw detections: 2 objects detected[/yellow]
+
+Clothing Recommendation
+┏━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┓
+┃ Status        ┃ Details               ┃ Action        ┃
+┡━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━┩
+│ Underdressed  │ Need 2.5 more warmth  │ Add: sweater  │
+└───────────────┴───────────────────────┴───────────────┘
 ```
 
 ## 🤝 Contributing
