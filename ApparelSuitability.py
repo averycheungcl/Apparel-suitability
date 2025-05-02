@@ -5,10 +5,59 @@ import os
 import cv2
 import numpy as np
 import torch
-from time import time
+import time
+import logging
 from ultralytics import YOLO
 import supervision as sv
+from rich.console import Console
+from rich.table import Table
+from rich.prompt import Prompt, Confirm
 
+
+#logging
+logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
+logger = logging.getLogger(__name__)
+
+#rich console for better readaiblity
+console = Console()
+
+
+#configs
+
+CONFIG = {
+    "weather": {
+        "api_key": "input own api key",
+        "base_url": "https://api.openweathermap.org/data/2.5/weather?",
+        "cache_duration": 600
+    },
+    "model": {
+        "path": "best.pt",  
+        "confidence_threshold": 0.3
+    },
+    "clothing": {
+        "default_warmth": {
+            "clothes": 3,
+            "dressshirt": 3,
+            "suit": 5,
+            "sweater": 7,
+            "trenchcoat": 10,
+            "tshirt": 3,
+            "vest": 3,
+            "hoodie": 8,
+            "rain_jacket": 9,
+            "puffer": 12
+        }
+    },
+    "detection": {
+        "interval": 15, 
+        "frame_skip": 2
+    },
+    "output": {
+        "directory": "output_images",
+        "video": "output_video.mp4",
+        "results_csv": "detection_results.csv"
+    }
+}
 class ObjectDetection:
     def __init__(self, capture_index):
         self.capture_index = capture_index
@@ -131,108 +180,40 @@ class ObjectDetection:
         return self.detected_values
 
 
+class WeatherAPI:
+    def __init__(self):
+        self.base_url = CONFIG["weather"]["base_url"]
+        self.api_key = CONFIG["weather"]["api_key"]
+        self.cache_duration = CONFIG["weather"]["cache_duration"]
+        self.cache = None
+        self.last_fetch = 0
 
-def kelvinToCelsius(kelvin):
-    return kelvin-273.15
-#weather collection 
-BASE_URL ="https://api.openweathermap.org//data/2.5/weather?"
-API_KEY="input own api key from openweather map"
-CITY = input("What city: ")
-url = BASE_URL+"appid="+API_KEY+"&q="+CITY
-response = requests.get(url).json()
-temp_kelvin = response['main']['temp']
-temp_celsius = kelvinToCelsius(temp_kelvin)
-temp_feelKel = response['main']['feels_like']
-temp_feelCel = kelvinToCelsius(temp_feelKel)
-print(f"Actual temp: {temp_celsius:.2f}")  
-print(f"Feels like: {temp_feelCel:.2f}")
+    def kelvin_to_celsius(self, kelvin):
+        return kelvin - 273.15
 
-while True:
-    cold_response = input("Are you prone to feeling cold? (yes/no): ")
-    if cold_response == "yes":
-        tempCompare = temp_feelCel  # Set temperature for prone to cold
-        break  # Break the loop if valid input is received
-    elif cold_response == "no":
-        tempCompare = temp_celsius  # Set temperature for not prone to cold
-        break  # Break the loop if valid input is received
-    else:
-        print("Invalid response. Please answer with 'yes' or 'no'.")               
+    def fetch_weather(self, city):
+        current_time = time.time()
+        if self.cache and (current_time - self.last_fetch) < self.cache_duration:
+            console.print("[green]Using cached weather data.[/green]")
+            return self.cache
 
+        url = f"{self.base_url}appid={self.api_key}&q={city}"
+        try:
+            response = requests.get(url).json()
+            if response.get("cod") != 200:
+                raise ValueError(f"API Error: {response.get('message', 'Invalid city name')}")
+            self.cache = response
+            self.last_fetch = current_time
+            return response
+        except Exception as e:
+            logger.error(f"Failed to fetch weather: {e}")
+            raise
 
-# Loop until valid input is received for clothing_response
-while True:
-    clothing_response = input("Are you wearing at least a t-shirt or a tank top? (yes/no): ").strip().lower()
+    def get_temperatures(self, city):
+        data = self.fetch_weather(city)
+        temp_celsius = self.kelvin_to_celsius(data["main"]["temp"])
+        temp_feel_celsius = self.kelvin_to_celsius(data["main"]["feels_like"])
+        return temp_celsius, temp_feel_celsius
     
-    if clothing_response == "yes":
-        print("You are ready to proceed!")
-        capture_index = 0  # Change to your camera index or video file path
-        detector = ObjectDetection(capture_index) #Create instance of ObjectDetection class 
-        detected_values = detector()
-        
-        warmth = sum(detected_values)  # Total warmth from detected clothing
-        clothing_value = detector.value_map
-        
-        # Determine how much warmth is needed based on tempCompare
-        if tempCompare < 0:  # Cold environment
-            warmth_needed = tempCompare + (warmth / 3)  # Calculate additional warmth needed
-            if warmth_needed > 0:
-                print(f"You need at least: {warmth_needed:.2f} Celsius worth of clothes!")
-                # Recommendations based on warmth needed
-                while warmth_needed > 0:
-                    clothing_recommendations = detector.value_map
-                    recommended_item = None
-                    
-                    for item, value in clothing_recommendations.items():
-                        if warmth_needed <= value:  # Check if the clothing item can cover the warmth needed
-                            recommended_item = item
-                            break
-                    
-                    if recommended_item:
-                        print(f"We recommend you put on a {recommended_item} to stay warm.")
-                        warmth_needed -= clothing_recommendations[recommended_item]  # Decrease warmth needed
-                    else:
-                        print("No more recommendations available.")
-                        break
-            else:
-                print("You are adequately dressed for the cold temperature.")
-        
-        else:  # For zero or positive temperatures
-            if tempCompare <= 10:
-                warmth_needed = abs(tempCompare) - (warmth / 3)  # For temperatures 10 and below
-            elif 10 < tempCompare < 22:
-                warmth_needed = tempCompare - (7+warmth / 3)  # For temperatures between 10 and 22
-            else:  # For temperatures 22 and above
-                warmth_needed = (tempCompare - 2) - (17+warmth / 3)  # Slight reduction for comfort
-            
-            if warmth > tempCompare:
-                print("You have too much clothing on for the current temperature! You may want to remove some layers.")
-            elif warmth < tempCompare:
-                print(f"You need at least: {warmth_needed:.2f} Celsius worth of clothes!")
-                
-                # Recommendations based on warmth needed
-                while warmth_needed > 0:
-                    clothing_recommendations = detector.value_map
-                    recommended_item = None
-                    
-                    for item, value in clothing_recommendations.items():
-                        if warmth_needed <= value:  # Check if the clothing item can cover the warmth needed
-                            recommended_item = item
-                            break
-                    
-                    if recommended_item:
-                        print(f"We recommend you put on a {recommended_item} to stay warm.")
-                        warmth_needed -= clothing_recommendations[recommended_item]  # Decrease warmth needed
-                    else:
-                        print("No more recommendations available.")
-                        break
-            else:
-                print("You are adequately dressed for the temperature.")
-        
-        break  # Exit the loop after processing the clothing response
-
-    elif clothing_response == "no":
-        print("Please put on at least a t-shirt or tank top before proceeding.")
-        break  # Exit the program 
-
-    else:
-        print("Invalid response. Please answer with 'yes' or 'no'.")
+    #put weather gathering into a class and improved readiblity wiht color
+    
