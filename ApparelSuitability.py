@@ -58,79 +58,161 @@ CONFIG = {
         "results_csv": "detection_results.csv"
     }
 }
-class ObjectDetection:
-    def __init__(self, capture_index):
-        self.capture_index = capture_index
-        
-        self.device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        print("Using Device: ", self.device) 
-        # select CPU or GPU 
 
-        self.model = self.load_model# calls the pretraiend pytorch model 
-        self.CLASS_NAMES_DICT = self.model.model.names # Get class names from pretrained model
-        
+class ClothingDetector:
+    def __init__(self, capture_index, value_map):
+        self.capture_index = capture_index
+        self.value_map = value_map
+        self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        console.print(f"[blue]Using device: {self.device}[/blue]")
+
+        self.model = self.load_model()
+        self.class_names = self.model.names
+        console.print(f"[blue]Model class names: {list(self.class_names.values())}[/blue]")
+        console.print(f"[blue]Expected clothing classes: {list(self.value_map.keys())}[/blue]")
+        console.print("[yellow]Note: YOLO11n.pt uses COCO classes (e.g., 'person', 'tie'). For clothing detection, train a custom model on a dataset like ModaNet.[/yellow]")
+
+        self.confidence_threshold = CONFIG["model"]["confidence_threshold"]
+
         self.box_annotator = sv.BoxAnnotator(
             color=sv.Color.WHITE,
             thickness=3,
             color_lookup=sv.ColorLookup.CLASS
         )
-        #create bounding box 
 
-        self.output_dir = 'output_images'
-        os.makedirs(self.output_dir, exist_ok=True) #Create directory if directory doesn't exist alr
-        self.img_counter = 0 
-        self.value_map = {
-            "clothes": 3,"dressshirt":3,"suit":5,"sweater":7,"trenchcoat":10,"tshirt":3,"vest":3  # Assigns the value 10 to trenchcoat whice corresponds to how many degrees a piece of clothing provides
-        }
-        self.detected_values = []# List to store the numerical value each piece of clothing provides
-        
+        self.output_dir = CONFIG["output"]["directory"]
+        os.makedirs(self.output_dir, exist_ok=True)
+        self.detected_values = []
+        self.results = []
 
     def load_model(self):
-        # model = YOLO("yolo11n.pt")
-        model = YOLO("best.pt") #custom pretrained model
-        model.fuse()
-        return model
+        try:
+            model = YOLO(CONFIG["model"]["path"])
+            model.fuse()
+            return model
+        except Exception as e:
+            logger.error(f"Error loading model: {e}")
+            raise
 
     def predict(self, frame):
-        results = self.model(frame) #run the model on webcam input frame
-        return results
+        try:
+            results = self.model(frame, conf=self.confidence_threshold)
+            console.print(f"[yellow]Raw detections: {len(results[0].boxes)} objects detected[/yellow]")
+            return results
+        except Exception as e:
+            logger.error(f"Error during prediction: {e}")
+            return []
 
-    def plot_bboxes(self, results, frame):
-        xyxys = []
-        confidences = []
-        class_ids = []
+    def plot_bboxes(self, results, frame, frame_count):
+        xyxys, confidences, class_ids = [], [], []
 
-        # Extract detections for the specified class
         for result in results:
             boxes = result.boxes.cpu().numpy()
             for i in range(len(boxes.xyxy)):
-                class_id = boxes.cls[i]
+                class_id = int(boxes.cls[i])
                 conf = boxes.conf[i]
                 xyxy = boxes.xyxy[i]
-                if self.CLASS_NAMES_DICT[class_id] in self.value_map:  # Check against value_map
-                    xyxys.append(xyxy)
-                    confidences.append(conf)
-                    class_ids.append(class_id)
+                class_name = self.class_names[class_id]
+                console.print(f"[cyan]Detection[/cyan]: {class_name}, Confidence: {conf:.2f}")
+                xyxys.append(xyxy)
+                confidences.append(conf)
+                class_ids.append(class_id)
+                if class_name in self.value_map:
+                    self.detected_values.append(self.value_map[class_name])
+                    self.results.append({
+                        "frame": frame_count,
+                        "class": class_name,
+                        "confidence": conf,
+                        "warmth": self.value_map[class_name],
+                        "timestamp": datetime.datetime.now().isoformat()
+                    })
+                else:
+                    console.print(f"[yellow]Class '{class_name}' not in value_map. Ignored for warmth calculation.[/yellow]")
 
-                    #Adds to warmth currently provided 
-                    self.detected_values.append(self.value_map[self.CLASS_NAMES_DICT[class_id]])
-
-        # Setup detections for visualization
-        if xyxys:  # Only proceed if we have detections
+        if xyxys:
             detections = sv.Detections(
                 xyxy=np.array(xyxys),
                 confidence=np.array(confidences),
                 class_id=np.array(class_ids),
             )
-
-            # Annotate and display frame 
             frame = self.box_annotator.annotate(scene=frame, detections=detections)
             for i, detection in enumerate(detections.xyxy):
                 x1, y1, x2, y2 = map(int, detection)
-                label = f"{self.CLASS_NAMES_DICT[class_ids[i]]} {confidences[i]:0.2f}"
-                cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+                label = f"{self.class_names[int(class_ids[i])]} {confidences[i]:.2f}"
+                cv2.putText(
+                    frame, label, (x1, y1 - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 0), 2
+                )
+        else:
+            console.print("[yellow]No detections in this frame[/yellow]")
 
         return frame
+
+    def save_results(self):
+        df = pd.DataFrame(self.results)
+        if not df.empty:
+            df.to_csv(os.path.join(self.output_dir, CONFIG["output"]["results_csv"]), index=False)
+            console.print(f"[green]Detection results saved to {CONFIG['output']['results_csv']}[/green]")
+
+    def run(self):
+        cap = cv2.VideoCapture(self.capture_index)
+        if not cap.isOpened():
+            logger.error("Error: Could not open video capture.")
+            raise ValueError("Invalid video capture source")
+        console.print("[green]Webcam opened successfully[/green]")
+
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 720)
+
+        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+        out = cv2.VideoWriter(
+            os.path.join(self.output_dir, CONFIG["output"]["video"]),
+            fourcc,
+            30.0,
+            (1280, 720)
+        )
+
+        paused = False
+        last_detection_time = time.time()
+        detection_interval = CONFIG["detection"]["interval"]
+        frame_skip = CONFIG["detection"]["frame_skip"]
+        frame_count = 0
+
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                console.print("[red]Error reading frame[/red]")
+                break
+
+            frame_count += 1
+            if frame_count % frame_skip != 0:
+                continue
+
+            current_time = time.time()
+            if not paused and (current_time - last_detection_time >= detection_interval):
+                results = self.predict(frame)
+                frame = self.plot_bboxes(results, frame, frame_count)
+                last_detection_time = current_time
+
+            fps = 1 / max(np.round(current_time - last_detection_time, 2), 0.01)
+            cv2.putText(frame, f"FPS: {int(fps)}", (20, 70), cv2.FONT_HERSHEY_SIMPLEX, 1.5, (0, 255, 0), 2)
+
+            cv2.imshow("Object Detection", frame)
+            out.write(frame)
+
+            key = cv2.waitKey(1)
+            if key & 0xFF == 27:
+                console.print("[yellow]Escape key pressed. Exiting...[/yellow]")
+                break
+            elif key & 0xFF == ord("p"):
+                paused = not paused
+                console.print(f"[blue]Detection {'paused' if paused else 'resumed'}[/blue]")
+
+        cap.release()
+        out.release()
+        cv2.destroyAllWindows()
+        self.save_results()
+        return self.detected_values
     
     def __call__(self):
         #Uses webcam as video capture and set dimensions
@@ -216,4 +298,3 @@ class WeatherAPI:
         return temp_celsius, temp_feel_celsius
     
     #put weather gathering into a class and improved readiblity wiht color
-    
