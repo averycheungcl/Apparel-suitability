@@ -298,3 +298,116 @@ class WeatherAPI:
         return temp_celsius, temp_feel_celsius
     
     #put weather gathering into a class and improved readiblity wiht color
+
+
+#Updated calculation of needing warmth as previous did not make sense (needing more clothes during hotter weather as well as readibility)
+class RecommendationEngine:
+    def __init__(self, value_map):
+        self.value_map = value_map
+
+    def recommend(self, warmth, temp, cold_sensitive):
+        # Adjust temperature for cold sensitivity
+        temp_effective = temp - (5 * (1 - temp / 30)) if cold_sensitive else temp
+
+        # Calculate required warmth
+        required_warmth = 30 - (temp_effective * 0.8)
+        required_warmth = max(3, min(40, required_warmth))  # Cap between 3 and 40
+
+        # Calculate warmth deficit
+        warmth_needed = required_warmth - warmth
+
+        table = Table(title="Clothing Recommendation")
+        table.add_column("Status", style="cyan")
+        table.add_column("Details", style="green")
+
+        if warmth_needed > 2:
+            status = "Underdressed"
+            details = f"Need {warmth_needed:.2f} more warmth units."
+            recommendations = []
+            remaining_warmth = warmth_needed
+            sorted_items = sorted(self.value_map.items(), key=lambda x: x[1], reverse=True)
+
+            for item, value in sorted_items:
+                if remaining_warmth >= value / 2:
+                    recommendations.append(item)
+                    remaining_warmth -= value
+                if remaining_warmth <= 0:
+                    break
+
+            if recommendations:
+                details += f" Suggested: {', '.join(recommendations)}"
+            else:
+                details += " No suitable clothing items found."
+        elif warmth_needed < -2:
+            status = "Overdressed"
+            details = f"Remove {abs(warmth_needed):.2f} warmth units to stay comfortable."
+        else:
+            status = "Adequately Dressed"
+            details = "Your clothing is suitable for the temperature."
+
+        table.add_row(status, details)
+        console.print(table)
+        return warmth_needed
+
+def customize_value_map(default_map):
+    console.print("[bold cyan]Customize warmth values (press Enter for default)[/bold cyan]")
+    custom_map = {}
+    for item, default_value in default_map.items():
+        value = Prompt.ask(
+            f"Enter warmth value for {item}",
+            default=str(default_value),
+            show_default=True
+        )
+        try:
+            custom_map[item] = float(value)
+        except ValueError:
+            console.print(f"[red]Invalid value for {item}. Using default: {default_value}[/red]")
+            custom_map[item] = default_value
+    return custom_map
+
+def main():
+    weather_api = WeatherAPI()
+    max_attempts = 3
+
+    for attempt in range(max_attempts):
+        city = Prompt.ask("Enter your city")
+        try:
+            temp_celsius, temp_feel_celsius = weather_api.get_temperatures(city)
+            console.print(f"[green]Actual temp: {temp_celsius:.2f}°C[/green]")
+            console.print(f"[green]Feels like: {temp_feel_celsius:.2f}°C[/green]")
+            break
+        except ValueError as e:
+            console.print(f"[red]Error: {e}[/red]")
+            if attempt == max_attempts - 1:
+                console.print("[red]Max attempts reached. Exiting.[/red]")
+                return
+
+    cold_sensitive = Confirm.ask("Are you prone to feeling cold?", default=False)
+    temp_compare = temp_feel_celsius if cold_sensitive else temp_celsius
+
+    if not Confirm.ask("Are you wearing at least a t-shirt or tank top?", default=True):
+        console.print("[red]Please wear at least a t-shirt or tank top.[/red]")
+        return
+
+    value_map = customize_value_map(CONFIG["clothing"]["default_warmth"])
+
+    try:
+        detector = ClothingDetector(capture_index=0, value_map=value_map)
+        detected_values = detector.run()
+    except Exception as e:
+        logger.error(f"Error during detection: {e}")
+        console.print("[red]Detection failed. Check logs for details.[/red]")
+        return
+
+    recommender = RecommendationEngine(value_map)
+    warmth = sum(detected_values) if detected_values else 0
+    recommender.recommend(warmth, temp_compare, cold_sensitive)
+
+if __name__ == "__main__":
+    try:
+        main()
+    except KeyboardInterrupt:
+        console.print("[yellow]Program interrupted by user.[/yellow]")
+    except Exception as e:
+        logger.error(f"Unexpected error: {e}")
+        console.print("[red]An error occurred. Check logs for details.[/red]")
